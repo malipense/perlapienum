@@ -55,22 +55,10 @@ getopts('UMNSPGlLDu:dp:f:rR:s:k:vAow:hnaiPK:', \%opts);
 
 use Socket;
 
-my $src_host = "www.google.com";
-my $dst_host = "api.github.com"; 
-my $dst_port = 80;
-my $src_port = 55489;
 
-my $dst_ip_address = gethostbyname($dst_host);
-my $src_ip_address = gethostbyname($src_host);
- 
-socket(RAW, AF_INET, SOCK_RAW, 255) || die $!;
-setsockopt(RAW, 0, 1, 1);
-
-my ($packet) = createheaders($src_ip_address, $src_port, $dst_ip_address, $dst_port);
-
-sub createheaders()
+sub createtcpipheaders
 {
-	local($src_ip_address, $src_port, $dst_ip_address, $dst_port) = @_;
+	our($src_ip_address, $src_port, $dst_ip_address, $dst_port) = @_;
 
 	my $zero_cksum = 0;
 
@@ -87,25 +75,25 @@ sub createheaders()
 	my $tcp_acknowledgment    = 0;
 	my $tcp_push              = 0;
 	my $tcp_reset             = 0;
-	my $tcp_syn = 1;
-	my $tcp_fin = 0;
-	my $null = 0;
-	my $tcp_window_size = 124;
-	my $tcp_urgent_ptr = 0;
+	my $tcp_syn 			  = 1;
+	my $tcp_fin 			  = 0;
+	my $null 				  = 0;
+	my $tcp_window_size 	  = 124;
+	my $tcp_urgent_ptr 		  = 0;
 	my $tcp_all = $null . $null . $tcp_urgent . $tcp_acknowledgment . $tcp_push . $tcp_reset . $tcp_syn . $tcp_fin;
 
 	my ($tcp_pseudo_header) = pack('a4a4CCnnnNNH2B8nvn',
 	$tcp_length, $src_port, $dst_port, $syn, $ack,
-	$tcp_head_reserved, $tcp_all, $tcp_win, $null, $tcp_urg_ptr);
+	$tcp_head_reserved, $tcp_all, $tcp_window_size, $null, $tcp_urgent_ptr);
 
-	my ($tcp_checksum) = &checksum($tcp_pseudo);
+	my ($tcp_checksum) = &checksum($tcp_pseudo_header);
 
 	# Now lets construct the IP packet
 	my $ip_version         = 4;
 	my $ip_length          = 5;
 	my $ip_version_length  = $ip_version . $ip_length;
 	my $ip_typeofservice   = 00;
-	my ($ip_total_length)  = $tcp_len + 20;
+	my ($ip_total_length)  = $tcp_length + 20;
 	my $ip_frag_id         = 19245;
 	my $ip_frag_flag       = 0x40;
 	my $ip_frag_oset       = "0000000000000";
@@ -114,13 +102,50 @@ sub createheaders()
 
 	# Lets pack this baby and ship it on out!
  	my ($pkt) = pack('H2H2nnB16C2na4a4nnNNH2B8nvn',
-	$ip_ver_len, $ip_tos, $ip_tot_len, $ip_frag_id,
+	$ip_version_length, $ip_typeofservice, $ip_total_length, $ip_frag_id,
 	$ip_fl_fr, $ip_ttl, $tcp_proto, $zero_cksum, $src_ip_address,
 	$dst_ip_address, #end of ip packet
 	
 	
 	$src_port, $dst_port, $syn, $ack, $tcp_head_reserved,
-	$tcp_all, $tcp_win, $tcp_checksum, $tcp_urg_ptr);
+	$tcp_all, $tcp_window_size, $tcp_checksum, $tcp_urgent_ptr);
 
  	return $pkt;
 }
+sub checksum {
+ # This of course is a blatent rip from _the_ GOD,
+ # W. Richard Stevens.
+  
+ my ($msg) = @_;
+ my ($len_msg,$num_short,$short,$chk);
+ $len_msg = length($msg);
+ $num_short = $len_msg / 2;
+ $chk = 0;
+ foreach $short (unpack("S$num_short", $msg)) {
+  $chk += $short;
+ }
+ $chk += unpack("C", substr($msg, $len_msg - 1, 1)) if $len_msg % 2;
+ $chk = ($chk >> 16) + ($chk & 0xffff);
+ return(~(($chk >> 16) + $chk) & 0xffff);
+}
+
+my $src_host = "www.google.com";
+my $dst_host = "www.downloadcult.org"; 
+my $dst_port = 80;
+my $src_port = 55489;
+
+
+print("running\n");
+my $dst_ip_address = gethostbyname($dst_host);
+my $src_ip_address = gethostbyname($src_host);
+print(inet_ntoa($src_ip_address)."\n");
+print(inet_ntoa($dst_ip_address)."\n");
+
+socket(RAW, AF_INET, SOCK_RAW, 255) || die $!;
+setsockopt(RAW, 0, 1, 1);
+
+my ($packet) = createtcpipheaders($src_ip_address, $src_port, $dst_ip_address, $dst_port);
+
+my ($destination) = pack('Sna4x8', AF_INET, $dst_port, $dst_ip_address);
+send(RAW,$packet,0,$destination);
+print("packge sent!");
